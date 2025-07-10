@@ -9,7 +9,7 @@ class JobScreener:
     def __init__(self, model_to_load="microsoft/Phi-3.5-mini-instruct", device_map="auto"):
         self.load_LLM(model_to_load, device_map)
         self.generation_args = {
-            "max_new_tokens": 256,
+            "max_new_tokens": 512,
             "temperature": 0.1,
             "do_sample": True
         }
@@ -77,5 +77,5 @@ class JobScreener:
             }
         return result
 
-    def run(self, job_list):
-        return [self.analyze_job(job) for job in job_list]
+    def run(self, job):
+        return self.analyze_job(job)
