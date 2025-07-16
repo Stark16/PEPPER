@@ -78,15 +78,23 @@ class WordFileManager:
         doc.save(output_path)
         print(f"[+] Updated {replacements_made} item(s) in '{output_path}'")
 
-    def export_json(self, output_path: str):
-        with open(output_path, 'w') as f:
-            json.dump(self.sections, f, indent=4)
+    def export_json(self, output_path: str = None):
+        """
+        If output_path is provided, saves the JSON to file. Otherwise, returns the JSON as a Python dict.
+        """
+        if output_path:
+            with open(output_path, 'w') as f:
+                json.dump(self.sections, f, indent=4)
+        else:
+            return self.sections
 
 
 if __name__ == "__main__":
-    input_resume = r"d:\Career\Resume\Pradyumn_Pathak_Resume.docx"
-    output_resume = r"d:\Career\Resume\Pradyumn_Pathak_Resume_scripted.docx"
+    input_resume = r"D:\Personal\Projects\Python_Projects\projects\PEPPER\data\candidate_data\default_resumes\Pradyumn_Pathak_Resume.docx"
+    output_resume = r"D:\Personal\Projects\Python_Projects\projects\PEPPER\data\candidate_data\default_resumes\Pradyumn_Pathak_Resume_curated.docx"
+    output_json = r"D:\Personal\Projects\Python_Projects\projects\PEPPER\data\resume_data.json"
 
     OBJ = WordFileManager(input_resume)
     OBJ.read()
+    OBJ.export_json(output_json)
     OBJ.write(output_resume)
