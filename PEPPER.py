@@ -5,7 +5,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from utils.candidate_resume_database import CandidateResumeDatabase
-from agents.jrms.agent3 import Agent3Recruiter
+from agents.agent3 import Agent3Recruiter
+from agents.agent2 import Agent2VirtualMe
+from agents.agent4 import Agent4CareerAdvisor
+from data.dbms_manager import DBManager
 
 app = FastAPI()
 
@@ -20,19 +23,43 @@ app.add_middleware(
 
 def initialize():
     info = []
-    global db, agent3
+    global db, agent3, agent2, agent4, dbms
     db = None
     agent3 = None
+    agent2 = None
+    agent4 = None
+    dbms = None
     try:
         db = CandidateResumeDatabase()
         info.append("CandidateResumeDatabase initialized successfully.")
     except Exception as e:
         info.append(f"CandidateResumeDatabase failed: {e}")
+    # try:
+    #     agent3 = Agent3Recruiter()
+    #     info.append("Agent3Recruiter initialized successfully.")
+    # except Exception as e:
+    #     info.append(f"Agent3Recruiter failed: {e}")
+    # try:
+    #     agent2 = Agent2VirtualMe()
+    #     info.append("Agent2VirtualMe initialized successfully.")
+    # except Exception as e:
+    #     info.append(f"Agent2VirtualMe failed: {e}")
+    # try:
+    #     agent4 = Agent4CareerAdvisor()
+    #     info.append("Agent4CareerAdvisor initialized successfully.")
+    # except Exception as e:
+    #     info.append(f"Agent4CareerAdvisor failed: {e}")
     try:
-        agent3 = Agent3Recruiter()
-        info.append("Agent3Recruiter initialized successfully.")
+        dbms = DBManager()
+        info.append("DBManager initialized successfully.")
+        # Test DB connection
+        if dbms.test_connection() == False:
+            print("Database connection failed. Server initialization terminated.")
+            import sys; sys.exit(1)
     except Exception as e:
-        info.append(f"Agent3Recruiter failed: {e}")
+        info.append(f"DBManager failed: {e}")
+        print("Database connection failed. Server initialization terminated.")
+        import sys; sys.exit(1)
     for msg in info:
         print(msg)
 
@@ -41,6 +68,24 @@ initialize()
 @app.get("/")
 async def home():
     return PlainTextResponse("PEPPER ready to assist")
+
+# API to fetch all user names
+@app.get("/users")
+async def get_users():
+    users = dbms.fetch_all_user_names()
+    return JSONResponse({"users": users})
+
+# Login API
+@app.post("/login")
+async def login(Name: str = Form(...), Pin: str = Form(...)):
+    # Pin should be a 4-digit string
+    if not (Pin.isdigit() and len(Pin) == 4):
+        return JSONResponse({"success": False, "error": "Pin must be a 4-digit number."}, status_code=400)
+    success, user_id = dbms.verify_user_pin(Name, Pin)
+    if success:
+        return JSONResponse({"success": True, "Id": user_id})
+    else:
+        return JSONResponse({"success": False})
 
 @app.post("/resume/tailor")
 async def tailor_resume(profile: dict = None, job: dict = None):
@@ -92,6 +137,9 @@ async def delete_resume(name: str = Query(...), curated: bool = Query(False)):
         return JSONResponse({"message": f"Resume '{name}' deleted successfully.", "curated": curated})
     else:
         return JSONResponse({"error": f"Resume '{name}' not found or could not be deleted.", "curated": curated}, status_code=404)
+    
+
+
 if __name__ == "__main__":
     print("PEPPER ready to assist")
     uvicorn.run("PEPPER:app", host="0.0.0.0", port=8000, reload=True)
