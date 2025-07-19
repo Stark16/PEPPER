@@ -1,4 +1,5 @@
-
+# Fetch user requests with queue position and resume name
+from fastapi import Body
 from fastapi import FastAPI, UploadFile, File, Form, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -87,57 +88,76 @@ async def login(Name: str = Form(...), Pin: str = Form(...)):
     else:
         return JSONResponse({"success": False})
 
-@app.post("/resume/tailor")
-async def tailor_resume(profile: dict = None, job: dict = None):
-    # Dummy implementation
-    return JSONResponse({"message": "Resume tailored successfully", "profile": profile, "job": job})
+@app.post("/user/fetch/request")
+async def fetch_user_requests(payload: dict = Body(...)):
+    user_id = payload.get("user_id")
+    page_num = payload.get("page_num")
+    n = payload.get("n")
+    if not user_id or not isinstance(page_num, int) or not isinstance(n, int):
+        return JSONResponse({"error": "user_id, page_num, and n are required."}, status_code=400)
+    entries = dbms.fetch_user_requests(user_id, page_num, n)
+    print(entries)
+    return JSONResponse({"requests": entries})
 
 @app.post("/resume/upload")
-async def upload_resume(file: UploadFile = File(...), name: str = Form(...)):
-    content = await file.read()
-    # Save the file using the database utility
-    save_path = db.save_resume_file(content, name)
-    return JSONResponse({"filename": name, "size": len(content), "saved_to": save_path})
-
-# Returns names of all resumes in default directory
-
-@app.api_route("/resume/fetch/default", methods=["GET", "OPTIONS"])
-async def fetch_default_resumes(request: Request):
-    if request.method == "OPTIONS":
-        return JSONResponse({}, status_code=200)
-    resumes = db.list_default_resumes()
-    return JSONResponse({"default_resumes": resumes})
-
-# Returns names of all resumes in curated directory
-
-@app.api_route("/resume/fetch/curated", methods=["GET", "OPTIONS"])
-async def fetch_curated_resumes(request: Request):
-    if request.method == "OPTIONS":
-        return JSONResponse({}, status_code=200)
-    resumes = db.list_curated_resumes()
-    return JSONResponse({"curated_resumes": resumes})
-
-# Download a resume file (default or curated)
-@app.get("/resume/download")
-async def download_resume(name: str, curated: bool = False):
-    file_path = db.get_resume_file(name, curated)
-    if file_path:
-        return FileResponse(path=file_path, filename=name, media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
-    return JSONResponse({"error": "File not found"}, status_code=404)
-
-@app.post("/resume/edit")
-async def edit_resume(resume: dict = None, changes: dict = None):
-    result = db.edit_resume(resume, changes)
-    return JSONResponse(result)
-
-@app.delete("/resume/delete")
-async def delete_resume(name: str = Query(...), curated: bool = Query(False)):
-    success = db.delete_resume_file(name, curated)
-    if success:
-        return JSONResponse({"message": f"Resume '{name}' deleted successfully.", "curated": curated})
-    else:
-        return JSONResponse({"error": f"Resume '{name}' not found or could not be deleted.", "curated": curated}, status_code=404)
+async def upload_resume(user_id: str = Form(...), file: UploadFile = File(...), file_name: str = Form(...), ResumeId: str = Form(None)):
+    # Ensure file_name ends with .docx
+    if not file_name.lower().endswith('.docx'):
+        file_name += '.docx'
+    try:
+        file_bytes = await file.read()
+        if ResumeId:
+            # Update existing resume file and name
+            success, result = dbms.update_resume_file(
+                ResumeId=ResumeId,
+                ResumeName=file_name,
+                file_bytes=file_bytes,
+                candidate_db=db
+            )
+            action = "updated"
+        else:
+            # Use the original file_name for display, but save as ResumeId.docx
+            success, result = dbms.save_new_resume(
+                UserId=user_id,
+                ResumeName=file_name,
+                file_bytes=file_bytes,
+                IsCurated=False,
+                ResumeJson=None,
+                candidate_db=db
+            )
+            action = "uploaded and request created"
+        if not success:
+            return JSONResponse({"success": False, "error": result}, status_code=500)
+        return JSONResponse({"success": True, "resume_id": result, "message": f"Resume {action}."})
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
     
+@app.get("/resume/download")
+async def download_resume(ResumeId: str = Query(...)):
+    abs_file_path, resume_name = dbms.get_resume_file_info(ResumeId)
+    import os
+    if not abs_file_path or not os.path.exists(abs_file_path):
+        return JSONResponse({"error": "Resume not found."}, status_code=404)
+    return FileResponse(
+        path=abs_file_path,
+        filename=resume_name,
+        media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
+    
+@app.post("/resume/rename")
+async def rename_resume(ResumeId: str = Form(...), new_name: str = Form(...)):
+    success = dbms.rename_resume(ResumeId, new_name)
+    if success:
+        return JSONResponse({"success": True, "message": "Resume renamed successfully."})
+    else:
+        return JSONResponse({"success": False, "error": "Failed to rename resume."}, status_code=500)
+
+@app.post("/resume/list")
+async def list_resumes(user_id: str = Form(...), mode: str = Form("default")):
+    # mode: "default" or "curated"
+    is_curated = True if mode.lower() == "curated" else False
+    resumes = dbms.fetch_user_resumes(user_id, is_curated)
+    return JSONResponse({"resumes": resumes})
 
 
 if __name__ == "__main__":
