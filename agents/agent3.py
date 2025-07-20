@@ -1,12 +1,13 @@
 import os
 import json
-from transformers import AutoTokenizer, AutoModelForCausalLM
-import torch
-import time
+
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from utils.model_llm import ModelLLM
 
 class Agent3Recruiter:
     
-    def __init__(self, model_to_load="microsoft/Phi-3.5-mini-instruct", device_map="auto"):
+    def __init__(self, OBJ_model:ModelLLM):
 
         self.PATH_self_dir = os.path.dirname(os.path.realpath(__file__))
         self.system_prompt = (
@@ -21,16 +22,11 @@ class Agent3Recruiter:
             "Extract only the most relevant **keywords, tools, technologies, certifications, and frameworks** that should be present in a resume. "
             "Ignore full sentences or soft skills. Output just a flat, comma-separated list of keywords.")
         
-        self.load_LLM(model_to_load, device_map)
-
+        self.OBJ_ModelLLM = OBJ_model
         self.generation_args = {
             "max_new_tokens": 768,
             "temperature": 0.2,
             "do_sample": True}
-
-    def load_LLM(self, model_to_load, device_map):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_to_load, trust_remote_code=False, padding_side='left')
-        self.model = AutoModelForCausalLM.from_pretrained(model_to_load, device_map=device_map, torch_dtype="auto", trust_remote_code=False)
 
     def build_prompt(self, job_json, mode="recruiter"):
         company = job_json.get("company", None)
@@ -98,20 +94,9 @@ class Agent3Recruiter:
         ats_messages = self.build_prompt(job_json, mode="ats")
         # Batch tokenize
 
-        t1 = time.time()
         inputs = [recruiter_messages, ats_messages]
-        tokenzized_input = self.tokenizer.apply_chat_template(inputs, add_generation_prompt=True, return_tensors="pt", padding=True).to(self.model.device)
-        
-        print("Total Tokenization Time: ", time.time() - t1)
-        t2 = time.time()
-        with torch.no_grad():
-            tokenzed_output = self.model.generate(tokenzized_input, **self.generation_args)
+        recruiter_decoded, ats_decoded = self.OBJ_ModelLLM.query(inputs, self.generation_args)
 
-        print("Total Generation Time:", time.time() - t2)
-        t3 = time.time()
-        recruiter_decoded, ats_decoded = self.tokenizer.batch_decode(tokenzed_output, skip_special_tokens=False, clean_up_tokenization_spaces=True)
-
-        print("Total Decoding Time:", time.time() - t3)
         recruiter_response = recruiter_decoded.split("<|assistant|>")[-1].split("<|end|>")[0].strip()
         ats_response = ats_decoded.split("<|assistant|>")[-1].split("<|end|>")[0].strip()
         # Parse recruiter output (still expects JSON)
@@ -145,7 +130,8 @@ if __name__ == "__main__":
                     "referral": False,
                     "description": "Tesla is on a path to build humanoid robots at scale to automate repetitive and boring tasks. Core to the Optimus, the manipulation stack presents a unique opportunity to work on state-of-the-art algorithms for object manipulation culminating in their deployment to real world production applications. Our robotic manipulation software engineers develop and own this stack from inception to deployment. Most importantly, you will see your work repeatedly shipped to and utilized by thousands of Humanoid Robots in real world applications. What You’ll Do Design and develop our learned robotic manipulation software stack and algorithms Develop robotic manipulation capabilities including but not limited to (re)grasping, pick-and-place, and more dexterous behaviors to enable useful work in both structured and unstructured environments Model robotic manipulation processes to enable analysis, simulation, planning, and controls Reason about uncertainty due to measurements and physical interaction with the environment, and develop algorithms that adapt well to imperfect information Assist with overall software architecture design, including designing interfaces between subsystems Ship production quality, safety-critical software Collaborate with a team of exceptional individuals laser focused on bringing useful bi-ped humanoid robots into the real world What You’ll Bring Production quality modern C++ or Python Experience in deep imitation learning or reinforcement learning in realistic applications Exposure to robotics learning through tactile and/or vision-based sensors. Experience writing both production-level Python (including Numpy and Pytorch) and modern C++ Proven track record of training and deploying real world neural networks Familiarity with 3D computer vision and/or graphics pipelines Experience with Natural Language Processing Experience with distributed deep learning systems Prior work in Robotics, State estimation, Visual Odometry, SLAM, Structure from Motion, 3D Reconstruction"
                     }
-    agent = Agent3Recruiter()
+    OBJ_ModelLLM = ModelLLM()
+    agent = Agent3Recruiter(OBJ_ModelLLM)
     result = agent.run(example_json)
     print(json.dumps(result, indent=2))
     agent.write_json(result)

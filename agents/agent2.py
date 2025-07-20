@@ -1,16 +1,14 @@
 import json
-from transformers import AutoTokenizer, AutoModelForCausalLM
-import time
-import torch
-
 import sys
 import os
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from utils.wordparser import WordFileManager
+from utils.model_llm import ModelLLM
 
 class Agent2VirtualMe:
-    def __init__(self, model_to_load="microsoft/Phi-3.5-mini-instruct", device_map="auto"):
+    def __init__(self, OBJ_model:ModelLLM):
 
         self.PATH_self_dir = os.path.dirname(os.path.realpath(__file__))
         self.system_prompt = (
@@ -42,16 +40,8 @@ class Agent2VirtualMe:
             
             "If a section is missing from the input, skip it in your output."
         )
-        self.load_LLM(model_to_load, device_map)
-        self.generation_args = {
-            "max_new_tokens": 768,
-            "temperature": 0.2,
-            "do_sample": True
-        }
-
-    def load_LLM(self, model_to_load, device_map):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_to_load, trust_remote_code=False, padding_side='left')
-        self.model = AutoModelForCausalLM.from_pretrained(model_to_load, device_map=device_map, torch_dtype="auto", trust_remote_code=False)
+        self.OBJ_ModelLLM = OBJ_model
+        self.generation_args = {"max_new_tokens": 768, "temperature": 0.2, "do_sample": True}
 
     def build_prompt(self, resume_json: dict):
         resume_str = json.dumps(resume_json, indent=2)
@@ -79,14 +69,9 @@ class Agent2VirtualMe:
 
     def run(self, resume_json: dict):
         prompt = self.build_prompt(resume_json)
-        inputs = self.tokenizer.apply_chat_template(prompt, add_generation_prompt=True, return_tensors="pt", padding=True).to(self.model.device)
-
-        t1 = time.time()
-        with torch.no_grad():
-            output = self.model.generate(inputs, **self.generation_args)
-        print("Total Generation Time:", time.time() - t1)
-        response = self.tokenizer.batch_decode(output, skip_special_tokens=False, clean_up_tokenization_spaces=True)
-        response = response[0].split("<|assistant|>")[-1].split("<|end|>")[0].strip()
+        
+        response = self.OBJ_ModelLLM.query(prompt, self.generation_args)
+        
         response = self.parse_response(response)
         return response
     
@@ -100,9 +85,10 @@ if __name__ == "__main__":
     # Example usage: parse a resume and generate a synopsis
     resume_path = r"d:\Career\Resume\Pradyumn_Pathak_Resume.docx"
     OBJ = WordFileManager(resume_path)
+    OBJ_ModelLLM = ModelLLM(local_model=True)
     OBJ.read()
     resume_json = OBJ.export_json()  # returns dict
-    agent = Agent2VirtualMe()
+    agent = Agent2VirtualMe(OBJ_ModelLLM)
     synopsis = agent.run(resume_json)
     print("\n--- Resume Synopsis ---\n")
     print(json.dumps(synopsis, indent=2))
