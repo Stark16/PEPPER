@@ -6,9 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from utils.candidate_resume_database import CandidateResumeDatabase
-from agents.agent3 import Agent3Recruiter
-from agents.agent2 import Agent2VirtualMe
-from agents.agent4 import Agent4CareerAdvisor
 from data.dbms_manager import DBManager
 
 app = FastAPI()
@@ -35,21 +32,6 @@ def initialize():
         info.append("CandidateResumeDatabase initialized successfully.")
     except Exception as e:
         info.append(f"CandidateResumeDatabase failed: {e}")
-    # try:
-    #     agent3 = Agent3Recruiter()
-    #     info.append("Agent3Recruiter initialized successfully.")
-    # except Exception as e:
-    #     info.append(f"Agent3Recruiter failed: {e}")
-    # try:
-    #     agent2 = Agent2VirtualMe()
-    #     info.append("Agent2VirtualMe initialized successfully.")
-    # except Exception as e:
-    #     info.append(f"Agent2VirtualMe failed: {e}")
-    # try:
-    #     agent4 = Agent4CareerAdvisor()
-    #     info.append("Agent4CareerAdvisor initialized successfully.")
-    # except Exception as e:
-    #     info.append(f"Agent4CareerAdvisor failed: {e}")
     try:
         dbms = DBManager()
         info.append("DBManager initialized successfully.")
