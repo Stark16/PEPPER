@@ -3,3 +3,5 @@ data/candidate_data/
 !.gitkeep
 ngrok_recovery_codes.txt
 *.json
+data/dbms/*
+!data/dbms/.gitkeep
