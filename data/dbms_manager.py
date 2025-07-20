@@ -1,4 +1,5 @@
 import os
+import json
 import pyodbc
 from utils.candidate_resume_database import CandidateResumeDatabase
 import uuid
@@ -15,24 +16,24 @@ class DBManager:
         """Test the database connection!"""
 
         try:
-            conn = pyodbc.connect(self.connection_string)
-            cursor = conn.cursor()
+            self.conn = pyodbc.connect(self.connection_string)
+            cursor = self.conn.cursor()
             cursor.execute("SELECT 1")
             result = cursor.fetchone()
             
             if result and result[0] == 1:
-                print("✅ Connection successful!")
+                print("\t\t [✅-INFO] Connection successful!")
                 return True
             else:
-                print("⚠️ Connected, but unexpected result:", result)
+                print("\t\t [⚠️-ERROR] Connected, but unexpected result:", result)
                 return False
 
         except pyodbc.Error as e:
-            print("❌ Connection failed:", e)
+            print("\t\t [❌-ERROR] Connection failed:", e)
             return False
         finally:
             if 'conn' in locals():
-                conn.close()
+                self.conn.close()
 
     def fetch_all_user_names(self):
         """
@@ -352,3 +353,80 @@ class DBManager:
                 cursor.close()
             if 'conn' in locals():
                 conn.close()
+
+    def get_next_pending_request(self):
+        """
+        Fetch the next pending request from tblRequest where Status != 'finished'.
+        Prioritize Status='Approved', then order by CreatedOn (oldest first).
+        Returns a dict with all columns for the top 1 entry, or None if no such entry exists.
+        """
+        query = (
+            "SELECT TOP 1 [Id], [UserId], [ResumeId], [Status], [Endpoint], [CreatedOn], [Type], [Input] "
+            "FROM tblRequests "
+            "WHERE [Status] = 'queued' "
+            "ORDER BY CASE WHEN [Status]='Approved' THEN 0 ELSE 1 END, [CreatedOn] ASC"
+        )
+        try:
+            with self.conn.cursor() as cursor:
+                cursor.execute(query)
+                row = cursor.fetchone()
+                if row:
+                    columns = [column[0] for column in cursor.description]
+                    return dict(zip(columns, row))
+                else:
+                    return None
+        except Exception as e:
+            print(f"\t\t[❌-ERROR] get_next_pending_request failed: {e}")
+            return None
+        
+    def update_task_info(self, request_id, agent_outputs: dict = None, status: str = "processing"):
+        """
+        If agent_outputs is None or empty, update tblRequests.Status to status and insert only RequestId/Status in tblResumeOutputs.
+        Otherwise, insert agent outputs into tblResumeOutputs and update Status in tblResume.
+        """
+        try:
+            if not agent_outputs:
+                # Only update tblRequests and upsert minimal tblRequestOutputs
+                with self.conn.cursor() as cursor:
+                    cursor.execute("UPDATE tblRequests SET Status = ? WHERE Id = ?", (status, request_id))
+                    # Check if entry exists
+                    cursor.execute("SELECT 1 FROM tblRequestOutputs WHERE RequestId = ?", (request_id,))
+                    exists = cursor.fetchone()
+                    if exists:
+                        cursor.execute("UPDATE tblRequestOutputs SET Status = ? WHERE RequestId = ?", (status, request_id))
+                    else:
+                        cursor.execute("INSERT INTO tblRequestOutputs ([RequestId], [Status]) VALUES (?, ?)", (request_id, status))
+                self.conn.commit()
+            else:
+                # Prepare columns and values for upsert
+                agent_columns = ["Agent2", "Agent3", "Agent4", "Agent5"]
+                set_clauses = []
+                set_values = []
+                for agent in agent_columns:
+                    if agent in agent_outputs:
+                        set_clauses.append(f"[{agent}] = ?")
+                        set_values.append(json.dumps(agent_outputs[agent]))
+                set_clauses.append("[Status] = ?")
+                set_values.append(status)
+                # Check if entry exists
+                with self.conn.cursor() as cursor:
+                    cursor.execute("SELECT 1 FROM tblRequestOutputs WHERE RequestId = ?", (request_id,))
+                    exists = cursor.fetchone()
+                    if exists:
+                        # Update only the agent columns and status
+                        update_stmt = f"UPDATE tblRequestOutputs SET {', '.join(set_clauses)} WHERE RequestId = ?"
+                        cursor.execute(update_stmt, (*set_values, request_id))
+                    else:
+                        # Insert new row with only the provided agent columns and status
+                        columns = ["RequestId"] + [agent for agent in agent_columns if agent in agent_outputs] + ["Status"]
+                        values = [request_id] + [json.dumps(agent_outputs[agent]) for agent in agent_columns if agent in agent_outputs] + [status]
+                        col_str = ", ".join(f"[{col}]" for col in columns)
+                        param_str = ", ".join(["?"] * len(values))
+                        insert_query = f"INSERT INTO tblRequestOutputs ({col_str}) VALUES ({param_str})"
+                        cursor.execute(insert_query, values)
+                    # Also update tblRequests.Status
+                    cursor.execute("UPDATE tblRequests SET Status = ? WHERE Id = ?", (status, request_id))
+                self.conn.commit()
+        except Exception as e:
+            print(f"\t\t [❌-ERROR] update_task_info failed: {e}")
+            self.conn.rollback()
