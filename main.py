@@ -19,7 +19,7 @@ if __name__ == "__main__":
     server_process.start()
 
     # Optional: Wait a few seconds to let server initialize
-    time.sleep(10)
+    time.sleep(1)
 
     # Step 2: Start the request worker in this process
     start_worker()  # This blocks forever (infinite loop)
