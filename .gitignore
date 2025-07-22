@@ -5,3 +5,4 @@ ngrok_recovery_codes.txt
 *.json
 data/dbms/*
 !data/dbms/.gitkeep
+purge_data.py
