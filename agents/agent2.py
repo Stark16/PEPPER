@@ -85,7 +85,7 @@ if __name__ == "__main__":
     # Example usage: parse a resume and generate a synopsis
     resume_path = r"d:\Career\Resume\Pradyumn_Pathak_Resume.docx"
     OBJ = WordFileManager(resume_path)
-    OBJ_ModelLLM = ModelLLM(local_model=True)
+    OBJ_ModelLLM = ModelLLM()
     OBJ.read()
     resume_json = OBJ.export_json()  # returns dict
     agent = Agent2VirtualMe(OBJ_ModelLLM)
