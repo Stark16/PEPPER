@@ -13,6 +13,17 @@ class Agent4CareerAdvisor:
     def __init__(self, OBJ_ModelLLM:ModelLLM):
 
         self.PATH_self_dir = os.path.dirname(os.path.realpath(__file__))
+        example_output = json.dumps({
+                        "SUMMARY": {
+                            "needs_editing": True,
+                            "reason": "The summary needs to more explicitly align with the robotics and 3D vision requirements of the job. It currently emphasizes Gen-AI and general deep learning.",
+                            "edit_instructions": [
+                            "Reframe the opening statement to highlight a blend of deep learning, computer vision, and edge AI, explicitly mentioning applicability to robotics or real-world physical systems.",
+                            "Integrate keywords like '3D Computer Vision', 'Reinforcement Learning', or 'Robotics Learning' if applicable to past experience (even implicitly).",
+                            "De-emphasize 'Gen-AI research' slightly in the primary descriptor and weave in more relevant aspects.",
+                            "The 'ACHIEVEMENTS & CERTIFICATIONS' section is strong but consider if any of these can be re-contextualized to hint at robotics or sensor-based work (e.g., E-Yantra Ideas Competition)."
+                            ]
+                            }})
         self.system_prompt = (
             "You are Agent 4, the Career Coach.\n\n"
             "You help tailor a candidate's resume for a specific job by analyzing:\n"
@@ -25,6 +36,8 @@ class Agent4CareerAdvisor:
             "- A short reason\n"
             "- Clear edit instructions (e.g., what to emphasize, add, remove, or reword)\n\n"
             "Format your response as a clean JSON object. Output only the JSON. Be direct and information-dense."
+            "Here's an exmaple of the output format for a 'SUMMARY' section of a resume and what you need to do:\n" +
+            example_output
         )
         self.OBJ_ModelLLM = OBJ_ModelLLM
         self.generation_args = {
@@ -70,14 +83,14 @@ class Agent4CareerAdvisor:
     def run(self, vimi_json: dict, recruiter_json: dict, resume_json: dict):
         messages = self.build_prompt(resume_json, vimi_json, recruiter_json)
 
-        self.OBJ_ModelLLM.query(messages, self.generation_args)
+        response = self.OBJ_ModelLLM.query(messages, self.generation_args)
 
         response = self.parse_response(response)
         return response
     
     def write_json(self, json_obj):
         os.makedirs(os.path.join(self.PATH_self_dir, '../data'), exist_ok=True)
-        out_path = os.path.join(self.PATH_self_dir, '../data/agent4.json')
+        out_path = os.path.join(self.PATH_self_dir, '../data/agent4_gemini.json')
         with open(out_path, 'w', encoding='utf-8') as f:
             json.dump(json_obj, f, indent=2, ensure_ascii=False)
 

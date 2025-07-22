@@ -15,11 +15,14 @@ class Agent3Recruiter:
             "Your task is to critically and practically extract the following two categories:\n\n"
             "1. Must-Have: These are non-negotiable skills, qualifications, or experiences that are essential for the role.\n"
             "2. Good-to-Have: These are desirable extras that give a candidate an edge, but are not strictly required.\n\n"
-            "Avoid listing vague soft skills unless the job specifically emphasizes them. Be honest, concise, and realistic about what matters most for this role.")
+            "Avoid listing vague soft skills unless the job specifically emphasizes them. Be honest, concise, and realistic about what matters most for this role."
+            "You are allowed to suggest deletions if any content appears outdated, irrelevant, or misaligned with the job target."
+            "Also, try to read through the Job Description to include potential soft skills that you'll look for. These mentions may or may not be directly listed in the Description so use your logic.")
         
         self.ats_prompt = (
             "You are an advanced Applicant Tracking System (ATS) analyzing a job description. "
-            "Extract only the most relevant **keywords, tools, technologies, certifications, and frameworks** that should be present in a resume. "
+            "Extract only relevant **keywords, tools, technologies, certifications, and frameworks** that should be present in a resume. "
+            "Also include 'terminological' keywords that may be present in the job description, some examples can be things like 'end-to-end' 'under the hood', etc."
             "Ignore full sentences or soft skills. Output just a flat, comma-separated list of keywords.")
         
         self.OBJ_ModelLLM = OBJ_model
@@ -95,10 +98,8 @@ class Agent3Recruiter:
         # Batch tokenize
 
         inputs = [recruiter_messages, ats_messages]
-        recruiter_decoded, ats_decoded = self.OBJ_ModelLLM.query(inputs, self.generation_args)
+        recruiter_response, ats_response = self.OBJ_ModelLLM.query(inputs, self.generation_args)
 
-        recruiter_response = recruiter_decoded.split("<|assistant|>")[-1].split("<|end|>")[0].strip()
-        ats_response = ats_decoded.split("<|assistant|>")[-1].split("<|end|>")[0].strip()
         # Parse recruiter output (still expects JSON)
         recruiter_result = self.parse_response(recruiter_response, mode="recruiter")
         # Parse ATS output (expects a flat, comma-separated list)
@@ -108,7 +109,7 @@ class Agent3Recruiter:
 
     def write_json(self, json_obj):
         os.makedirs(os.path.join(self.PATH_self_dir, '../data'), exist_ok=True)
-        out_path = os.path.join(self.PATH_self_dir, '../data/agent3.json')
+        out_path = os.path.join(self.PATH_self_dir, '../data/agent3_gemini.json')
         with open(out_path, 'w', encoding='utf-8') as f:
             json.dump(json_obj, f, indent=2, ensure_ascii=False)
 
