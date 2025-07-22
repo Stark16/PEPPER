@@ -86,8 +86,8 @@ class Worker:
                 
                 print("\t\t"+"="*(len(print_task_header)//2) + " [✅-INFO] Task completed! " + "="*(len(print_task_header)//2) + "\n\n")
 
-            else:
-                time.sleep(10)
+
+            time.sleep(10)
 
 if __name__ == "__main__":
     # Start the worker loop
