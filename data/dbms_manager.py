@@ -2,7 +2,9 @@ import os
 import json
 import pyodbc
 from utils.candidate_resume_database import CandidateResumeDatabase
+from utils.wordparser import WordFileManager
 import uuid
+import datetime
 
 
 class DBManager:
@@ -129,7 +131,7 @@ class DBManager:
             if 'conn' in locals():
                 conn.close()
 
-    def save_new_resume(self, UserId: str, ResumeName: str, file_bytes: bytes, IsCurated: bool, ResumeJson: str = None, candidate_db=None, created_on=None):
+    def save_new_resume(self, UserId: str, ResumeName: str, file_bytes: bytes, IsCurated: bool = False, ResumeJson: str = None, candidate_db=None, created_on=None):
         """
         Saves a new resume entry in the database, saves the file, and creates a new request for parsing.
         Stores only the relative file path from the data folder in the DB.
@@ -175,6 +177,59 @@ class DBManager:
             return True, ResumeId
         except Exception as e:
             print(f"Error saving resume: {e}")
+            return False, str(e)
+        finally:
+            if 'cursor' in locals():
+                cursor.close()
+            if 'conn' in locals():
+                conn.close()
+
+    def curate_new_resume(self, user_id: str, resume_id: str, job_desc: dict):
+        """
+        Creates a curated resume entry in tblResume and a new request for curation.
+        """
+        try:
+            # 1. Get file info
+            file_path, resume_name = self.get_resume_file_info(resume_id)
+            if not file_path:
+                return False, "Resume file not found."
+            # 2. Build new ResumeName
+            file_path = file_path.split(self.PATH_self_dir)[1]
+            company = job_desc.get("company")
+            jobid = job_desc.get("jobid")
+            created_on = datetime.datetime.now()
+            date_str = created_on.strftime("%Y%m%d")
+            # Remove .docx extension if present
+            base_name = resume_name[:-5] if resume_name.lower().endswith('.docx') else resume_name
+            if company and jobid:
+                new_resume_name = f"{base_name}_{company}_{jobid}.docx"
+            else:
+                new_resume_name = f"{base_name}_{date_str}.docx"
+            # 3. Create new Id
+            new_resume_id = str(uuid.uuid4())
+            # 4. Insert into tblResume
+            conn = pyodbc.connect(self.connection_string)
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO tblResume (Id, UserId, ResumeName, FilePath, IsCurated, ResumeJson, CreatedOn, EditedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                new_resume_id, user_id, new_resume_name, file_path, True, None, created_on, resume_id
+            )
+            conn.commit()
+            # 5. Create new request for curation
+            status, result = self.create_new_request(
+                UserId=user_id,
+                ResumeId=new_resume_id,
+                Status="queued",
+                EndPoint="/curate_resume",
+                Type="Curate",
+                Input=json.dumps(job_desc),
+                created_on=created_on
+            )
+            if not status:
+                return False, f"Curated resume saved but request creation failed: {result}"
+            return True, new_resume_id
+        except Exception as e:
+            print(f"Error curating resume: {e}")
             return False, str(e)
         finally:
             if 'cursor' in locals():
@@ -299,13 +354,20 @@ class DBManager:
             for idx, row in enumerate(rows):
                 # Calculate queue position if not finished
                 queue_position = None
-                if row.Status != 'finished':
-                    # Count how many pending/processing requests were submitted before this one
-                    queue_position = sum(1 for v in pending_dict.values() if v < row.CreatedOn)
+                status_field_reply = queue_position
+
+                if row.Status == 'finished':
+                    status_field_reply = 'Finished'
+                elif row.Status == 'pending':
+                    status_field_reply = 'Pending'
+                elif queue_position is not None and row.Status != 'finished':
+                    queue_position += 1 if queue_position is not None else None
+                    status_field_reply = queue_position
+
                 entry = {
                     'RequestId': row.Id,
                     'endpoint': row.Endpoint,
-                    'status': 'Finished' if row.Status == 'finished' else queue_position + 1 if queue_position is not None else None,
+                    'status': status_field_reply,
                     'resumeName': row.ResumeName if row.ResumeName else None
                 }
                 result.append(entry)
@@ -321,6 +383,48 @@ class DBManager:
             if 'conn' in locals():
                 conn.close()
 
+    def fetch_request_state(self, request_id: str):
+        """
+        Given a request_id, fetches the status from tblRequests. If status is 'finished' or 'pending',
+        fetches agent outputs from tblRequestOutputs. Returns dict: {"status": ..., "agents": {...}}
+        """
+
+        agent_keys = ["Agent2", "Agent3", "Agent4", "Agent5"]
+        try:
+
+            cursor = self.conn.cursor()
+            # 1. Get status from tblRequests
+            cursor.execute("SELECT Status FROM tblRequests WHERE Id = ?", request_id)
+            row = cursor.fetchone()
+            if not row:
+                return {"error": "Request not found."}
+            status = row.Status if hasattr(row, 'Status') else row[0]
+            agents = {k: None for k in agent_keys}
+            if status in ("finished", "pending"):
+                # 2. Get agent outputs from tblRequestOutputs
+                cursor.execute(f"SELECT {', '.join(agent_keys)} FROM tblRequestOutputs WHERE RequestId = ?", request_id)
+                agent_row = cursor.fetchone()
+                if agent_row:
+                    for idx, k in enumerate(agent_keys):
+                        val = agent_row[idx]
+                        if isinstance(val, str):
+                            try:
+                                agents[k] = json.loads(val)
+                            except Exception:
+                                agents[k] = val
+                        else:
+                            agents[k] = val
+            # If status is 'queued', just return empty agent content
+            return {"status": status, "agents": agents}
+        except Exception as e:
+            print(f"\t\t [❌-ERROR] fetch_request_state failed: {e}")
+            return {"error": str(e)}
+        finally:
+            if 'cursor' in locals():
+                cursor.close()
+            if 'conn' in locals():
+                self.conn.close()
+
     def fetch_user_resumes(self, UserId: str, is_curated: bool):
         """
         Fetches resumes for a user filtered by IsCurated, ordered by CreatedOn (latest first).
@@ -330,7 +434,7 @@ class DBManager:
             conn = pyodbc.connect(self.connection_string)
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT Id, ResumeName, ResumeJson FROM tblResume WHERE UserId = ? AND IsCurated = ? ORDER BY CreatedOn DESC",
+                "SELECT Id, ResumeName, ResumeJson, CreatedOn FROM tblResume WHERE UserId = ? AND IsCurated = ? ORDER BY CreatedOn DESC",
                 UserId, is_curated
             )
             rows = cursor.fetchall()
@@ -342,7 +446,9 @@ class DBManager:
                 result.append({
                     "ResumeId": resume_id,
                     "Name": name,
-                    "HasJson": has_json
+                    "HasJson": has_json,
+                    "ResumeJson" : row.ResumeJson,
+                    "CreatedOn" : row.CreatedOn.strftime("%Y%m%d")
                 })
             return result
         except Exception as e:
@@ -363,7 +469,8 @@ class DBManager:
         query = (
             "SELECT TOP 1 [Id], [UserId], [ResumeId], [Status], [Endpoint], [CreatedOn], [Type], [Input] "
             "FROM tblRequests "
-            "WHERE [Status] = 'queued' "
+            # "WHERE [Status] IN ('queued', 'pending') "
+            "WHERE [Status] IN ('queued') "
             "ORDER BY CASE WHEN [Status]='Approved' THEN 0 ELSE 1 END, [CreatedOn] ASC"
         )
         try:
@@ -430,3 +537,66 @@ class DBManager:
         except Exception as e:
             print(f"\t\t [❌-ERROR] update_task_info failed: {e}")
             self.conn.rollback()
+
+    def update_tblResume(self, resume_id: str, resume_json: str, FilePath: str = None):
+        """
+        Updates ResumeJson column in tblResume for the given resume_id. If FilePath is provided, also updates FilePath column.
+        Uses self.conn for the update.
+        """
+        try:
+            # Ensure resume_json is a string
+            if not isinstance(resume_json, str):
+                resume_json = json.dumps(resume_json, ensure_ascii=False)
+            with self.conn.cursor() as cursor:
+                if FilePath is not None:
+                    cursor.execute(
+                        "UPDATE tblResume SET ResumeJson = ?, FilePath = ? WHERE Id = ?",
+                        resume_json, FilePath, resume_id
+                    )
+                else:
+                    cursor.execute(
+                        "UPDATE tblResume SET ResumeJson = ? WHERE Id = ?",
+                        resume_json, resume_id
+                    )
+                self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"\t\t [❌-ERROR] update_tblResume failed: {e}")
+            self.conn.rollback()
+            return False
+        
+    def fetch_resume_detail(self, resume_id: str, fetch_resume_parse: bool = False):
+        """
+        Fetches the full resume detail including Id, UserId, ResumeName, FilePath, IsCurated, ResumeJson, CreatedOn.
+        If fetch_resume_parse is True, also returns parsed resume JSON using WordFileManager.export_json.
+        """
+        try:
+            with self.conn.cursor() as cursor:
+                cursor.execute("SELECT * FROM tblResume WHERE Id = ?", resume_id)
+                row = cursor.fetchone()
+                if row:
+                    columns = [column[0] for column in cursor.description]
+                    result = dict(zip(columns, row))
+                    if fetch_resume_parse:
+                        rel_path = result.get("FilePath")
+                        if rel_path:
+                            abs_path = self.PATH_self_dir + rel_path
+                            try:
+                                parser = WordFileManager(abs_path)
+                                parser.read()
+                                result["parsed_json"] = parser.export_json()
+                            except Exception as e:
+                                print(f"\t\t [❌-ERROR] Could not parse resume file: {e}")
+                                result["parsed_json"] = None
+                        else:
+                            result["parsed_json"] = None
+                    cursor.execute("SELECT ResumeJson FROM tblResume WHERE Id = ?", result['EditedBy'])
+                    row = cursor.fetchone()
+                    if row:
+                        result["ResumeJson"] = row[0]
+                    return result
+                else:
+                    return None
+        except Exception as e:
+            print(f"\t\t [❌-ERROR] fetch_resume_detail failed: {e}")
+            return None

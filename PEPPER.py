@@ -1,3 +1,5 @@
+from fastapi import HTTPException
+
 # Fetch user requests with queue position and resume name
 from fastapi import Body
 from fastapi import FastAPI, UploadFile, File, Form, Query, Request
@@ -78,8 +80,19 @@ async def fetch_user_requests(payload: dict = Body(...)):
     if not user_id or not isinstance(page_num, int) or not isinstance(n, int):
         return JSONResponse({"error": "user_id, page_num, and n are required."}, status_code=400)
     entries = dbms.fetch_user_requests(user_id, page_num, n)
-    print(entries)
+    # print(entries)
     return JSONResponse({"requests": entries})
+
+@app.post("/user/fetch/request/state")
+async def fetch_request_state(payload: dict = Body(...)):
+    request_id = payload.get("request_id")
+    if not request_id:
+        raise HTTPException(status_code=400, detail="request_id is required.")
+    result = dbms.fetch_request_state(request_id)
+    # print(result)
+    if "error" in result:
+        return JSONResponse({"success": False, "error": result["error"]}, status_code=404)
+    return JSONResponse({"success": True, "status": result["status"], "agents": result["agents"]})
 
 @app.post("/resume/upload")
 async def upload_resume(user_id: str = Form(...), file: UploadFile = File(...), file_name: str = Form(...), ResumeId: str = Form(None)):
@@ -125,7 +138,7 @@ async def download_resume(ResumeId: str = Query(...)):
         filename=resume_name,
         media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     )
-    
+
 @app.post("/resume/rename")
 async def rename_resume(ResumeId: str = Form(...), new_name: str = Form(...)):
     success = dbms.rename_resume(ResumeId, new_name)
@@ -140,6 +153,18 @@ async def list_resumes(user_id: str = Form(...), mode: str = Form("default")):
     is_curated = True if mode.lower() == "curated" else False
     resumes = dbms.fetch_user_resumes(user_id, is_curated)
     return JSONResponse({"resumes": resumes})
+
+@app.post("/resume/curate")
+async def curate_resume_endpoint(payload: dict = Body(...)):
+    resume_id = payload.get("resume_id")
+    user_id = payload.get("user_id")
+    job_desc = payload.get("job_desc")
+    if not (resume_id and user_id and job_desc):
+        return JSONResponse({"success": False, "error": "resume_id, user_id, and job_desc are required."}, status_code=400)
+    success, result = dbms.curate_new_resume(user_id, resume_id, job_desc)
+    if not success:
+        return JSONResponse({"success": False, "error": result}, status_code=500)
+    return JSONResponse({"success": True, "curated_resume_id": result, "message": "Curated resume created and request queued."})
 
 
 if __name__ == "__main__":
