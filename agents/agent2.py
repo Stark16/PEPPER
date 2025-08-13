@@ -39,6 +39,7 @@ class Agent2VirtualMe:
             "}\n\n"
             
             "If a section is missing from the input, skip it in your output."
+            "Ignore the 'TITLE' key from the provided resume json."
         )
         self.OBJ_ModelLLM = OBJ_model
         self.generation_args = {"max_new_tokens": 768, "temperature": 0.2, "do_sample": True}

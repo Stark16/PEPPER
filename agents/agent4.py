@@ -22,6 +22,7 @@ class Agent4CareerAdvisor:
                             "Integrate keywords like '3D Computer Vision', 'Reinforcement Learning', or 'Robotics Learning' if applicable to past experience (even implicitly).",
                             "De-emphasize 'Gen-AI research' slightly in the primary descriptor and weave in more relevant aspects.",
                             "The 'ACHIEVEMENTS & CERTIFICATIONS' section is strong but consider if any of these can be re-contextualized to hint at robotics or sensor-based work (e.g., E-Yantra Ideas Competition)."
+                            "Ignore the 'TITLE' section."
                             ]
                             }})
         self.system_prompt = (
@@ -36,6 +37,7 @@ class Agent4CareerAdvisor:
             "- A short reason\n"
             "- Clear edit instructions (e.g., what to emphasize, add, remove, or reword)\n\n"
             "Format your response as a clean JSON object. Output only the JSON. Be direct and information-dense."
+            "Ignore the 'TITLE' section."
             "Here's an exmaple of the output format for a 'SUMMARY' section of a resume and what you need to do:\n" +
             example_output
         )
