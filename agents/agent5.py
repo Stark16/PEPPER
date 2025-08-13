@@ -30,6 +30,8 @@ class Agent5ResumeCoach:
                                 "- If deleting content:  \n"
                                 '  "delete": the exact block of text that should be removed (verbatim)\n\n'
                                 "Preserve formatting such as indentation, bullet points, and line breaks. Do not rewrite unchanged sections. "
+                                "Ignore the 'TITLE' key from the provided json."
+                                "Also, If you see `<REMOVED>` token for any section, just leave out those `specific` points from your output or ignore those changes whichever makes the most sense."
                                 "Do not output any explanations — only the JSON list of modifications.\n\n"
                                 "Output nothing else.")
         
@@ -111,7 +113,7 @@ if __name__ == "__main__":
     agent4_json_path = r"D:\Personal\Projects\Python_Projects\projects\PEPPER\data\agent4_gemini.json"
 
     # Load resume JSON as before
-    resume_path = r"data/candidate_data/default_resumes/f4217103-e728-487c-aa93-8dcba245ef83.docx"
+    resume_path = r"data/candidate_data/default_resumes/f72f1abc-e7f5-4a99-9d37-6a546a5ab4e8.docx"
     OBJ = WordFileManager(resume_path)
     OBJ_ModelLLM = ModelLLM()
     OBJ.read()
