@@ -1,3 +1,4 @@
+import os
 from fastapi import HTTPException
 
 # Fetch user requests with queue position and resume name
@@ -94,6 +95,35 @@ async def fetch_request_state(payload: dict = Body(...)):
         return JSONResponse({"success": False, "error": result["error"]}, status_code=404)
     return JSONResponse({"success": True, "status": result["status"], "agents": result["agents"]})
 
+@app.post("/user/request/delete")
+async def delete_user_request(payload: dict = Body(...)):
+    request_id = payload.get("request_id")
+    if not request_id:
+        return JSONResponse({"success": False, "error": "request_id is required."}, status_code=400)
+    try:
+        success, error = dbms.delete_db_entry("tblRequests", request_id)
+        if success:
+            return JSONResponse({"success": True})
+        else:
+            return JSONResponse({"success": False, "error": error}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+    
+@app.post("/user/download/curated")
+async def download_curated_resume(payload: dict = Body(...)):
+    request_id = payload.get("request_id")
+    if not request_id:
+        return JSONResponse({"error": "request_id is required."}, status_code=400)
+    abs_file_path, resume_name = dbms.get_curated_resume(request_id)
+    print(abs_file_path)
+    if not abs_file_path or not os.path.exists(abs_file_path):
+        return JSONResponse({"error": "Curated resume not found."}, status_code=404)
+    return FileResponse(
+        path=abs_file_path,
+        filename=resume_name,
+        media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
+
 @app.post("/resume/upload")
 async def upload_resume(user_id: str = Form(...), file: UploadFile = File(...), file_name: str = Form(...), ResumeId: str = Form(None)):
     # Ensure file_name ends with .docx
@@ -130,7 +160,6 @@ async def upload_resume(user_id: str = Form(...), file: UploadFile = File(...), 
 @app.get("/resume/download")
 async def download_resume(ResumeId: str = Query(...)):
     abs_file_path, resume_name = dbms.get_resume_file_info(ResumeId)
-    import os
     if not abs_file_path or not os.path.exists(abs_file_path):
         return JSONResponse({"error": "Resume not found."}, status_code=404)
     return FileResponse(
@@ -138,6 +167,20 @@ async def download_resume(ResumeId: str = Query(...)):
         filename=resume_name,
         media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     )
+
+@app.post("/user/request/approve")
+async def approve_user_request(payload: dict = Body(...)):
+    request_id = payload.get("request_id")
+    approve = payload.get("approve")
+    agent4_updated = payload.get("agent4_updated")
+    if not request_id or approve is None:
+        return JSONResponse({"success": False, "error": "request_id and approve are required."}, status_code=400)
+    success, error = dbms.update_request_approval(request_id, approve, agent4_updated)
+    if success:
+        msg = "Request approved." if approve else "Request rejected."
+        return JSONResponse({"success": True, "message": msg})
+    else:
+        return JSONResponse({"success": False, "error": error}, status_code=500)
 
 @app.post("/resume/rename")
 async def rename_resume(ResumeId: str = Form(...), new_name: str = Form(...)):
@@ -165,6 +208,21 @@ async def curate_resume_endpoint(payload: dict = Body(...)):
     if not success:
         return JSONResponse({"success": False, "error": result}, status_code=500)
     return JSONResponse({"success": True, "curated_resume_id": result, "message": "Curated resume created and request queued."})
+
+@app.post("/resume/delete")
+async def delete_resume(payload: dict = Body(...)):
+    resume_id = payload.get("resume_id")
+    if not resume_id:
+        return JSONResponse({"success": False, "error": "resume_id is required."}, status_code=400)
+    try:
+        success, error = dbms.delete_db_entry("tblResume", resume_id)
+        if success:
+            return JSONResponse({"success": True})
+        else:
+            return JSONResponse({"success": False, "error": error}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
 
 
 if __name__ == "__main__":

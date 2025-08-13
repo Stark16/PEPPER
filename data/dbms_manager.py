@@ -147,7 +147,8 @@ class DBManager:
             save_path = candidate_db.save_resume_file(file_bytes, filename)
             # Compute relative path from data folder
             data_base = os.path.abspath(os.path.join(self.PATH_self_dir, '..', 'data'))
-            rel_file_path = os.path.relpath(save_path, data_base)
+            rel_file_path = os.path.relpath(save_path, data_base).replace('\\', '/')
+            rel_file_path = rel_file_path[1:] if rel_file_path.startswith('/') else rel_file_path
             # Use provided created_on or generate new
             if created_on is None:
                 import datetime
@@ -195,6 +196,8 @@ class DBManager:
                 return False, "Resume file not found."
             # 2. Build new ResumeName
             file_path = file_path.split(self.PATH_self_dir)[1]
+            file_path = file_path.replace('\\', '/')
+            file_path = file_path[1:] if file_path.startswith('/') else file_path
             company = job_desc.get("company")
             jobid = job_desc.get("jobid")
             created_on = datetime.datetime.now()
@@ -260,6 +263,23 @@ class DBManager:
             if 'conn' in locals():
                 conn.close()
 
+    def get_curated_resume(self, request_id: str):
+        """
+        Given a request_id, fetches the ResumeId from tblRequests, then returns (absolute_file_path, resume_name) using get_resume_file_info.
+        Returns (abs_file_path, resume_name) or (None, None) if not found.
+        """
+        try:
+            with self.conn.cursor() as cursor:
+                cursor.execute("SELECT ResumeId FROM tblRequests WHERE Id = ?", request_id)
+                row = cursor.fetchone()
+                if not row or not row[0]:
+                    return None, None
+                resume_id = row[0]
+                return self.get_resume_file_info(resume_id)
+        except Exception as e:
+            print(f"Error fetching curated resume file info: {e}")
+            return None, None
+
     def update_resume_file(self, ResumeId: str, ResumeName: str, file_bytes: bytes, candidate_db=None):
         """
         Replaces the file for the given ResumeId and updates ResumeName in tblResume.
@@ -276,7 +296,7 @@ class DBManager:
             row = cursor.fetchone()
             if not row:
                 return False, "ResumeId not found."
-            rel_file_path = row.FilePath
+            rel_file_path = row.FilePath[2:]
             # Get full path
             full_path = self.get_resume_full_path(rel_file_path)
             # Overwrite the file
@@ -335,7 +355,7 @@ class DBManager:
                 SELECT r.Id, r.UserId, r.ResumeId, r.Status, r.Endpoint, r.CreatedOn, res.ResumeName
                 FROM tblRequests r
                 LEFT JOIN tblResume res ON r.ResumeId = res.Id
-                WHERE r.UserId = ?
+                WHERE r.UserId = ? AND (r.IsDeleted IS NULL OR r.IsDeleted != 1)
                 ORDER BY r.CreatedOn DESC
             '''
             cursor.execute(query, user_id)
@@ -360,6 +380,10 @@ class DBManager:
                     status_field_reply = 'Finished'
                 elif row.Status == 'pending':
                     status_field_reply = 'Pending'
+                elif row.Status == 'approved':
+                    status_field_reply = 'Approved'
+                elif row.Status == 'rejected':
+                    status_field_reply = 'Rejected'
                 elif queue_position is not None and row.Status != 'finished':
                     queue_position += 1 if queue_position is not None else None
                     status_field_reply = queue_position
@@ -368,6 +392,7 @@ class DBManager:
                     'RequestId': row.Id,
                     'endpoint': row.Endpoint,
                     'status': status_field_reply,
+                    'CreatedOn' : row.CreatedOn.strftime("%Y-%m-%d %H:%M:%S"),
                     'resumeName': row.ResumeName if row.ResumeName else None
                 }
                 result.append(entry)
@@ -382,6 +407,31 @@ class DBManager:
                 cursor.close()
             if 'conn' in locals():
                 conn.close()
+
+    def update_request_approval(self, request_id: str, approve: bool, agent4_updated:str):
+        """
+        Updates the Status of tblRequests for the given request_id to 'Approved' or 'Rejected'.
+        Uses self.conn for the update.
+        Returns (True, None) on success, (False, error_message) on failure.
+        """
+        try:
+            new_status = "approved" if approve else "rejected"
+            with self.conn.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE tblRequests SET Status = ? WHERE Id = ?",
+                    new_status, request_id
+                )
+                self.conn.commit()
+                cursor.execute(
+                    "UPDATE tblRequestOutputs SET Agent4 = ? WHERE RequestId = ?",
+                    agent4_updated, request_id
+                )
+                self.conn.commit()
+            return True, None
+        except Exception as e:
+            print(f"Error updating request approval: {e}")
+            self.conn.rollback()
+            return False, str(e)
 
     def fetch_request_state(self, request_id: str):
         """
@@ -400,7 +450,7 @@ class DBManager:
                 return {"error": "Request not found."}
             status = row.Status if hasattr(row, 'Status') else row[0]
             agents = {k: None for k in agent_keys}
-            if status in ("finished", "pending"):
+            if status in ("finished", "approved", "pending"):
                 # 2. Get agent outputs from tblRequestOutputs
                 cursor.execute(f"SELECT {', '.join(agent_keys)} FROM tblRequestOutputs WHERE RequestId = ?", request_id)
                 agent_row = cursor.fetchone()
@@ -434,7 +484,7 @@ class DBManager:
             conn = pyodbc.connect(self.connection_string)
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT Id, ResumeName, ResumeJson, CreatedOn FROM tblResume WHERE UserId = ? AND IsCurated = ? ORDER BY CreatedOn DESC",
+                "SELECT Id, ResumeName, ResumeJson, CreatedOn FROM tblResume WHERE UserId = ? AND IsCurated = ? AND  (IsDeleted IS NULL OR IsDeleted != 1) ORDER BY CreatedOn DESC",
                 UserId, is_curated
             )
             rows = cursor.fetchall()
@@ -470,7 +520,7 @@ class DBManager:
             "SELECT TOP 1 [Id], [UserId], [ResumeId], [Status], [Endpoint], [CreatedOn], [Type], [Input] "
             "FROM tblRequests "
             # "WHERE [Status] IN ('queued', 'pending') "
-            "WHERE [Status] IN ('queued') "
+            "WHERE [Status] IN ('queued', 'approved') "
             "ORDER BY CASE WHEN [Status]='Approved' THEN 0 ELSE 1 END, [CreatedOn] ASC"
         )
         try:
@@ -549,6 +599,8 @@ class DBManager:
                 resume_json = json.dumps(resume_json, ensure_ascii=False)
             with self.conn.cursor() as cursor:
                 if FilePath is not None:
+                    FilePath = FilePath.replace('\\', '/')
+                    FilePath = FilePath[1:] if FilePath.startswith('/') else FilePath
                     cursor.execute(
                         "UPDATE tblResume SET ResumeJson = ?, FilePath = ? WHERE Id = ?",
                         resume_json, FilePath, resume_id
@@ -580,7 +632,7 @@ class DBManager:
                     if fetch_resume_parse:
                         rel_path = result.get("FilePath")
                         if rel_path:
-                            abs_path = self.PATH_self_dir + rel_path
+                            abs_path = os.path.join(self.PATH_self_dir, rel_path)
                             try:
                                 parser = WordFileManager(abs_path)
                                 parser.read()
@@ -600,3 +652,43 @@ class DBManager:
         except Exception as e:
             print(f"\t\t [❌-ERROR] fetch_resume_detail failed: {e}")
             return None
+
+    def delete_db_entry(self, TableName: str, Id: str):
+        """
+        Soft delete an entry in tblResume or tblRequests. For tblResume, also deletes the associated file.
+        Args:
+            TableName (str): 'tblResume' or 'tblRequests'
+            Id (str): UUID of the entry to delete
+        Returns:
+            (True, None) on success, (False, error_message) on failure
+        """
+        try:
+            if TableName == "tblResume":
+                # Set IsDeleted = 1 for the Id
+                with self.conn.cursor() as cursor:
+                    cursor.execute("UPDATE tblResume SET IsDeleted = 1 WHERE Id = ?", Id)
+                    # Fetch FilePath
+                    cursor.execute("SELECT FilePath FROM tblResume WHERE Id = ?", Id)
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        rel_file_path = row[0]
+                        abs_file_path = self.get_resume_full_path(rel_file_path)
+                        print(abs_file_path)
+                        # Delete the file if it exists
+                        if os.path.exists(abs_file_path):
+                            os.remove(abs_file_path)
+                self.conn.commit()
+                return True, None
+            elif TableName == "tblRequests":
+                # Set IsDelete = 1 for the Id
+                with self.conn.cursor() as cursor:
+                    cursor.execute("UPDATE tblRequests SET IsDeleted = 1 WHERE Id = ?", Id)
+                self.conn.commit()
+                return True, None
+            else:
+                return False, f"Unsupported TableName: {TableName}"
+        except Exception as e:
+            print(f"\t\t [❌-ERROR] delete_db_entry failed: {e}")
+            self.conn.rollback()
+            return False, str(e)
+

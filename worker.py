@@ -4,7 +4,7 @@ import json
 from data.dbms_manager import DBManager
 from utils.wordparser import WordFileManager
 from utils.model_llm import ModelLLM
-from agents import agent2, agent3, agent4
+from agents import agent2, agent3, agent4, agent5
 
 class Worker:
 
@@ -66,8 +66,90 @@ class Worker:
                                                                resume_details['parsed_json'])
             agent_outputs.update({"Agent4": agent4_career_coach_response})
             # print(json.dumps(agent_outputs["Agent4"], indent=2))
+            print(f"\t\t [📦-INFO] Updating DataBase ...")
             self.OBJ_db.update_task_info(task["Id"], agent_outputs, "pending")
 
+
+        if task['Status'] == 'approved':
+
+            agent5_instance = agent5.Agent5ResumeCoach(self.OBJ_ModelLLM)
+            agent_outputs = self.OBJ_db.fetch_request_state(task["Id"])
+
+            print(f"\t\t [📦-INFO] Fetching Resume JSON ...")
+            PATH_in_full = os.path.join(self.PATH_self_dir ,'data', resume_details['FilePath'])
+            OBJ_WordFile = WordFileManager(PATH_in_full)
+            OBJ_WordFile.read()
+            resume_json = OBJ_WordFile.export_json()
+
+            print(f"\t\t [🧠-INFO] Running Agent5 ...")
+            resume_changes = agent5_instance.run(agent_outputs["agents"]["Agent4"], resume_json)
+            OBJ_WordFile.mark_updates_for_docxedit(resume_changes)
+
+            output_file_name = resume_details['Id'] + '.docx'
+            PATH_out_rel = resume_details['FilePath'].replace('default_resumes', 'curated_resumes')
+            PATH_out_rel = PATH_out_rel.replace(os.path.basename(resume_details['FilePath']), output_file_name)
+
+            print(f"\t\t [📦-INFO] Writing Curated Resume ...")
+            PATH_out_full = os.path.join(self.PATH_self_dir, 'data', PATH_out_rel)
+            OBJ_WordFile.write(PATH_out_full)
+
+            updated_agent_outputs = {"Agent2" : agent_outputs["agents"]["Agent2"],
+                                     "Agent3" : agent_outputs["agents"]["Agent3"],
+                                     "Agent4" : agent_outputs["agents"]["Agent4"],
+                                     "Agent5" : resume_json}
+            
+            # Create Agent2 Output for Curated Resume-
+            OBJResumeCurated = WordFileManager(PATH_out_full)
+            OBJResumeCurated.read()
+            parsed_resume_curated = OBJResumeCurated.export_json()
+
+            print(f"\t\t [🧠-INFO] Running Agent2 ...")
+            agent2_instance = agent2.Agent2VirtualMe(self.OBJ_ModelLLM)
+            vimi_json = agent2_instance.run(parsed_resume_curated)
+
+            print(f"\t\t [📦-INFO] Updating DataBase ...")
+            self.OBJ_db.update_tblResume(task["ResumeId"], vimi_json, FilePath=PATH_out_rel)
+            self.OBJ_db.update_task_info(task["Id"], updated_agent_outputs, "finished")
+            
+
+    def replace_paragraph_text(doc, old_string, new_string, include_tables=True, show_errors=False):
+        """
+        Replaces the entire paragraph text if it matches old_string exactly.
+        Preserves paragraph formatting and works for both body and tables.
+        """
+        string_instances_replaced = 0
+
+        # Replace in document body
+        for paragraph in doc.paragraphs:
+            if paragraph.text.strip() == old_string.strip():
+                # Replace all runs with a single run containing new_string
+                for run in paragraph.runs:
+                    run.text = ""
+                paragraph.add_run(new_string)
+                string_instances_replaced += 1
+                print(f'[✅] Replaced paragraph: "{old_string}" -> "{new_string}"')
+            else:
+                if show_errors and old_string in paragraph.text:
+                    print(f'[!] Partial match found but not replaced: "{paragraph.text}"')
+
+        # Replace in tables if requested
+        if include_tables:
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            if paragraph.text.strip() == old_string.strip():
+                                for run in paragraph.runs:
+                                    run.text = ""
+                                paragraph.add_run(new_string)
+                                string_instances_replaced += 1
+                                print(f'[✅] Replaced table paragraph: "{old_string}" -> "{new_string}"')
+                            else:
+                                if show_errors and old_string in paragraph.text:
+                                    print(f'[!] Partial match found in table but not replaced: "{paragraph.text}"')
+
+        print(f'Summary: Replaced {string_instances_replaced} instances of "{old_string}" with "{new_string}"')
+                        
 
     def start_worker_loop(self):
         print("\n\n\t\t[🚀-INIT] Process Queue Worker Intiated.")
@@ -85,8 +167,6 @@ class Worker:
                     self.curate_resume(task)
                 
                 print("\t\t"+"="*(len(print_task_header)//2) + " [✅-INFO] Task completed! " + "="*(len(print_task_header)//2) + "\n\n")
-
-
             time.sleep(10)
 
 if __name__ == "__main__":
